@@ -30,6 +30,7 @@ let tickInterval = null;
 
 let currentTime = 0;
 let duration = 0;
+let errorMessage = '';
 
 // Volume: 0 to 100
 let volume = 80;
@@ -58,6 +59,7 @@ process.stdin.on('data', (input) => {
 
     // Up Arrow or 'k'
     if (input === '\u001b[A' || input[2] === 'A' || input === 'k') {
+        errorMessage = '';
         selected--;
         if (selected < 0) {
             selected = songs.length - 1;
@@ -67,6 +69,7 @@ process.stdin.on('data', (input) => {
 
     // Down Arrow or 'j'
     if (input === '\u001b[B' || input[2] === 'B' || input === 'j') {
+        errorMessage = '';
         selected++;
         if (selected >= songs.length) {
             selected = 0;
@@ -123,6 +126,39 @@ process.stdin.on('data', (input) => {
 // ---------------- PLAYER ----------------
 
 function player(index) {
+    errorMessage = '';
+    const song = songs[index];
+    const songPath = path.resolve(songsDir, song);
+
+    // Validate audio file existence and size (> 0 bytes)
+    try {
+        const stats = fs.statSync(songPath);
+        if (stats.size === 0) {
+            errorMessage = `⚠️ Cannot play "${song}": File is empty (0 bytes).`;
+            isManuallyStopped = true;
+            if (tickInterval) {
+                clearInterval(tickInterval);
+                tickInterval = null;
+            }
+            if (childProcess) {
+                try { childProcess.stdin.write('stop\n'); } catch (e) {}
+                childProcess.kill('SIGTERM');
+                childProcess = null;
+            }
+            currentPlaying = -1;
+            currentTime = 0;
+            duration = 0;
+            isPaused = false;
+            render();
+            return;
+        }
+    } catch (err) {
+        errorMessage = `⚠️ Cannot read "${song}": ${err.message}`;
+        currentPlaying = -1;
+        render();
+        return;
+    }
+
     // Mark previous as manual stop so it doesn't trigger auto-repeat
     isManuallyStopped = true;
     if (tickInterval) {
@@ -144,8 +180,6 @@ function player(index) {
 
     render();
 
-    const song = songs[index];
-    const songPath = path.resolve(songsDir, song);
     const volRatio = (volume / 100).toFixed(2);
 
     childProcess = spawn('osascript', [
@@ -397,6 +431,10 @@ function render() {
         }
     } else {
         console.log('Status:      ⏹️  Stopped');
+    }
+
+    if (errorMessage) {
+        console.log(`Alert:       \x1b[33m${errorMessage}\x1b[0m`);
     }
 
     const mode = REPEAT_MODES[repeatModeIndex];
